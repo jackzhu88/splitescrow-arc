@@ -1,0 +1,36 @@
+<!doctype html><html><head><meta charset="utf-8"><title>SplitEscrow on Arc</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<style>body{font-family:system-ui;max-width:720px;margin:2rem auto;padding:0 1rem}input,button{padding:.5rem;margin:.2rem 0;width:100%}button{cursor:pointer}.row{display:flex;gap:.5rem}.card{border:1px solid #ddd;border-radius:8px;padding:1rem;margin:1rem 0}code{word-break:break-all}</style></head>
+<body><h1>SplitEscrow</h1><p>Lock USDC for a shared bill or a group payout, release it split by shares, or get refunded after the deadline. Runs on Arc, where USDC is the gas token.</p>
+<label>Contract address <input id="addr" value="0x2DcAb07de247880D01E3aAf1293B3dd7681E19F1"></label>
+<button id="connect">Connect wallet</button><div id="who"></div>
+<div class="card"><h3>New deal</h3>
+<label>Recipients (comma-separated addresses)<input id="rcp"></label>
+<label>Shares in % (comma-separated, sum 100)<input id="shares" placeholder="70,30"></label>
+<label>Amount (USDC)<input id="amt" placeholder="1.5"></label>
+<label>Deadline (hours from now)<input id="hrs" value="24"></label>
+<label>Memo<input id="memo" placeholder="Team dinner"></label>
+<button id="create">Fund deal</button></div>
+<div class="card"><h3>Deals</h3><button id="load">Load deals</button><div id="list"></div></div>
+<p id="status"></p>
+<script>
+const NETS={5042:{name:"Arc Mainnet",rpc:"https://rpc.mainnet.arc.io",exp:"https://explorer.arc.io"},5042002:{name:"Arc Testnet",rpc:"https://rpc.testnet.arc.io",exp:"https://explorer.testnet.arc.io"}};
+const q=new URLSearchParams(location.search); const $=id=>document.getElementById(id);
+let abi,signer,net; $('addr').value=q.get('c')||localStorage.c||'0x2DcAb07de247880D01E3aAf1293B3dd7681E19F1';
+const st=t=>$('status').innerHTML=t;
+fetch('SplitEscrow.json').then(r=>r.json()).then(j=>abi=j.abi);
+const C=()=>{localStorage.c=$('addr').value;return new ethers.Contract($('addr').value,abi,signer||new ethers.JsonRpcProvider(NETS[5042].rpc))};
+$('connect').onclick=async()=>{const p=new ethers.BrowserProvider(window.ethereum);await p.send('eth_requestAccounts',[]);signer=await p.getSigner();net=NETS[Number((await p.getNetwork()).chainId)];$('who').textContent=(await signer.getAddress())+' on '+(net?net.name:'unsupported network')};
+const link=h=>net?`<a target=_blank href="${net.exp}/tx/${h}">${h}</a>`:h;
+async function send(p){st('Waiting for wallet…');const tx=await p;st('Sent '+link(tx.hash));await tx.wait();st('Confirmed '+link(tx.hash));}
+$('create').onclick=async()=>{try{const r=$('rcp').value.split(',').map(s=>s.trim());const b=$('shares').value.split(',').map(s=>Math.round(parseFloat(s)*100));
+ if(b.reduce((a,x)=>a+x,0)!==10000)throw Error('shares must sum to 100');
+ const dl=Math.floor(Date.now()/1000+parseFloat($('hrs').value)*3600);
+ await send(C().createDeal(r,b,dl,$('memo').value,{value:ethers.parseEther($('amt').value)}));}catch(e){st('Error: '+(e.shortMessage||e.message))}};
+$('load').onclick=async()=>{const c=C();const n=Number(await c.dealCount());let h='';for(let i=n-1;i>=0&&i>=n-20;i--){const d=await c.getDeal(i);
+ h+=`<div class=card><b>#${i} ${d.memo}</b> — ${ethers.formatEther(d.amount)} USDC — ${d.settled?'settled':'open'} — deadline ${new Date(Number(d.deadline)*1000).toLocaleString()}<br>payer <code>${d.payer}</code><br>${d.recipients.map((r,k)=>`<code>${r}</code> ${Number(d.bps[k])/100}%`).join('<br>')}
+ ${d.settled?'':`<div class=row><button onclick="act('release',${i})">Release</button><button onclick="act('refund',${i})">Refund (after deadline)</button></div>`}</div>`}
+ $('list').innerHTML=h||'No deals yet';};
+window.act=async(f,i)=>{try{await send(C()[f](i))}catch(e){st('Error: '+(e.shortMessage||e.message))}};
+</script></body></html>
